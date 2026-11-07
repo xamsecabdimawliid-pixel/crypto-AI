@@ -1,0 +1,35 @@
+services:
+  - type: worker
+    name: ai-crypto-telegram-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    plan: starter
+
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+
+      - key: SCAN_MINUTES
+        value: "15"
+
+      - key: EXCHANGES
+        value: "binance,bybit,okx"
+
+      - key: QUOTE_CURRENCY
+        value: "USDT"
+
+      - key: TIMEFRAME
+        value: "15m"
+
+      - key: MIN_24H_QUOTE_VOLUME
+        value: "500000"
+
+      - key: RISK_PERCENT
+        value: "2"
+
+      - key: DB_PATH
+        value: "/var/data/signals.db"
