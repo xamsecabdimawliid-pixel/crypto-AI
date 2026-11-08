@@ -2,8 +2,8 @@ import os
 import asyncio
 
 from telegram import Bot
+
 from scanner import scan_top_signals
-from storage import init_db, save_signal
 from formatter import format_signal
 
 
@@ -12,7 +12,7 @@ async def main():
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
 
-    init_db()
+    print("Bilowga baaritaanka coins...")
 
     signals = await asyncio.to_thread(
         scan_top_signals
@@ -25,38 +25,28 @@ async def main():
             await bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    "🔎 Baaritaan waa dhammaaday.\n\n"
+                    "🔎 Baaritaanka waa dhammaaday.\n\n"
                     "Maanta lama helin coin buuxiyey "
-                    "shuruudaha A+ VIP.\n\n"
+                    "shuruudaha A+, A, B+ ama B.\n\n"
                     "💎 Sug baaritaanka xiga."
                 )
             )
 
+            print("Signal lama helin.")
             return
-
-        sent = 0
 
         for signal in signals[:3]:
 
-            if save_signal(signal):
-
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=format_signal(signal),
-                    parse_mode="HTML",
-                    disable_web_page_preview=True
-                )
-
-                sent += 1
-
-        if sent == 0:
-
             await bot.send_message(
                 chat_id=chat_id,
-                text=(
-                    "ℹ️ Signals-kii hore ayaa hore loo diray. "
-                    "Signal cusub lama helin."
-                )
+                text=format_signal(signal),
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+
+            print(
+                f"Signal la diray: "
+                f"{signal['symbol']} {signal['grade']}"
             )
 
 
