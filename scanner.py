@@ -187,8 +187,27 @@ def scan_top_signals():
             print(f"{exchange_id}: {error}")
 
     results.sort(
-        key=lambda x: (x["score"], x["quote_volume"]),
+        key=lambda x: (
+            x.get("score", 0),
+            x.get("quote_volume", 0)
+        ),
         reverse=True
     )
 
-    return results[:3]
+    unique_coins = []
+    seen_coins = set()
+
+    for signal in results:
+        symbol = signal.get("symbol", "")
+        base_coin = symbol.split("/")[0]
+
+        if base_coin in seen_coins:
+            continue
+
+        seen_coins.add(base_coin)
+        unique_coins.append(signal)
+
+        if len(unique_coins) == 3:
+            break
+
+    return unique_coins
