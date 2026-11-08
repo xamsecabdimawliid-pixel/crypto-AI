@@ -1,123 +1,194 @@
-import asyncio
-import logging
 import os
-from telegram.ext import Application, CommandHandler
-from scanner import scan_top_signals
-from storage import init_db, save_signal, get_stats
-from formatter import format_signal
+import ccxt
+import pandas as pd
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("crypto_bot")
+from strategy import analyze_market
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-SCAN_MINUTES = int(os.getenv("SCAN_MINUTES", "15"))
+EXCHANGES = [
+    x.strip().lower()
+    for x in os.getenv(
+        "EXCHANGES", "binance,bybit,okx"
+    ).split(",")
+    if x.strip()
+]
+
+QUOTE = os.getenv("QUOTE_CURRENCY", "USDT")
+
+MIN_24H_VOLUME = float(
+    os.getenv("MIN_24H_QUOTE_VOLUME", "5000000")
+)
+
+MAX_SYMBOLS = int(
+    os.getenv("MAX_SYMBOLS_PER_EXCHANGE", "10")
+)
 
 
-async def scan_job(context):
-    try:
-        signals = await asyncio.to_thread(scan_top_signals)
-        sent = 0
+def _to_frame(candles):
+    return pd.DataFrame(
+        candles,
+        columns=[
+            "timestamp", "open", "high",
+            "low", "close", "volume"
+        ]
+    )
 
-        for signal in signals[:3]:
-            if save_signal(signal):
-                msg = format_signal(signal)
-                if CHAT_ID:
-                    await context.bot.send_message(
-                        chat_id=CHAT_ID,
-                        text=msg,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True
+
+def _five_hour_from_hourly(hourly):
+
+    data = hourly.copy()
+
+    data["time"] = pd.to_datetime(
+        data["timestamp"],
+        unit="ms",
+        utc=True
+    )
+
+    data = data.set_index("time")
+
+    result = data.resample(
+        "5h",
+        label="right",
+        closed="right"
+    ).agg({
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+        "timestamp": "last"
+    }).dropna()
+
+    return result.reset_index(drop=True)[
+        ["timestamp", "open", "high", "low", "close", "volume"]
+    ]
+
+
+def _fetch_frames(exchange, symbol):
+
+    hourly = _to_frame(
+        exchange.fetch_ohlcv(
+            symbol,
+            timeframe="1h",
+            limit=1000
+        )
+    )
+
+    frames = {
+        "15m": _to_frame(
+            exchange.fetch_ohlcv(
+                symbol, timeframe="15m", limit=220
+            )
+        ),
+
+        "1h": hourly,
+
+        "4h": _to_frame(
+            exchange.fetch_ohlcv(
+                symbol, timeframe="4h", limit=220
+            )
+        ),
+
+        "5h": _five_hour_from_hourly(hourly),
+
+        "1d": _to_frame(
+            exchange.fetch_ohlcv(
+                symbol, timeframe="1d", limit=220
+            )
+        )
+    }
+
+    return frames
+
+
+def _tradingview_url(exchange_id, market):
+
+    exchange_names = {
+        "binance": "BINANCE",
+        "bybit": "BYBIT",
+        "okx": "OKX"
+    }
+
+    prefix = exchange_names.get(
+        exchange_id.lower(),
+        exchange_id.upper()
+    )
+
+    market_id = market.get("id", "").replace("/", "").replace(":", "")
+
+    return (
+        "https://www.tradingview.com/chart/?symbol="
+        f"{prefix}%3A{market_id}"
+    )
+
+
+def scan_exchange(exchange_id):
+
+    exchange_class = getattr(ccxt, exchange_id)
+
+    exchange = exchange_class({
+        "enableRateLimit": True,
+        "timeout": 30000,
+        "options": {"defaultType": "spot"}
+    })
+
+    markets = exchange.load_markets()
+    tickers = exchange.fetch_tickers()
+
+    candidates = []
+
+    for symbol, market in markets.items():
+
+        if not market.get("spot"):
+            continue
+
+        if not market.get("active", True):
+            continue
+
+        if market.get("quote") != QUOTE:
+            continue
+
+        if market.get("base") == QUOTE:
+            continue
+
+        ticker = tickers.get(symbol) or {}
+
+        quote_volume = ticker.get("quoteVolume")
+
+        if quote_volume is None:
+            last = ticker.get("last")
+            base_volume = ticker.get("baseVolume")
+
+            quote_volume = (last or 0) * (base_volume or 0)
+
+        if quote_volume and float(quote_volume) >= MIN_24H_VOLUME:
+            candidates.append(
+                (symbol, market, float(quote_volume))
+            )
+
+    candidates.sort(
+        key=lambda item: item[2],
+        reverse=True
+    )
+
+    results = []
+
+    for symbol, market, quote_volume in candidates[:MAX_SYMBOLS]:
+
+        try:
+            frames = _fetch_frames(exchange, symbol)
+
+            signal = analyze_market(frames)
+
+            if signal:
+
+                signal.update({
+                    "symbol": symbol,
+                    "exchange": exchange_id.upper(),
+                    "quote_volume": quote_volume,
+                    "timeframe": "15M / 1H / 4H / 5H / 1D",
+                    "tradingview_url": _tradingview_url(
+                        exchange_id, market
                     )
-                sent += 1
+                })
 
-        log.info("Scan complete. New signals: %s", sent)
-
-    except Exception:
-        log.exception("Scheduled scan failed")
-
-
-async def start(update, context):
-    await update.message.reply_text(
-        "Welcome to AI Crypto Signals (Spot).\n"
-        "Commands: /scan - scan now, /stats - tracked signal results, /help - help.\n"
-        "Signals are research alerts, not guaranteed returns."
-    )
-
-
-async def scan_cmd(update, context):
-    await update.message.reply_text(
-        "Scanning USDT spot markets. This may take a minute..."
-    )
-
-    try:
-        signals = await asyncio.to_thread(scan_top_signals)
-
-        if not signals:
-            await update.message.reply_text(
-                "No setup passed the filters. No trade is better than a weak signal."
-            )
-            return
-
-        for s in signals[:3]:
-            await update.message.reply_text(
-                format_signal(s),
-                parse_mode="HTML",
-                disable_web_page_preview=True
-            )
-            save_signal(s)
-
-    except Exception as e:
-        log.exception("Manual scan failed")
-        await update.message.reply_text(
-            f"Scan failed: {type(e).name}. Check Render logs."
-        )
-
-
-async def stats_cmd(update, context):
-    stats = get_stats()
-
-    await update.message.reply_text(
-        f"Tracked signals: {stats['total']}\n"
-        f"Closed: {stats['closed']} | Wins: {stats['wins']} | Losses: {stats['losses']}\n"
-        f"Observed win rate: {stats['win_rate']}%\n"
-        "Win rate is meaningful only after enough closed, non-overlapping signals."
-    )
-
-
-async def help_cmd(update, context):
-    await update.message.reply_text(
-        "/start - welcome\n"
-        "/scan - run a scan now\n"
-        "/stats - view tracked signal stats\n"
-        "Automatic scan runs every 15 minutes. Spot only; no exchange trading keys are needed."
-    )
-
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "Set TELEGRAM_BOT_TOKEN in Render environment variables."
-        )
-
-    init_db()
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("scan", scan_cmd))
-    app.add_handler(CommandHandler("stats", stats_cmd))
-    app.add_handler(CommandHandler("help", help_cmd))
-
-    app.job_queue.run_repeating(
-        scan_job,
-        interval=SCAN_MINUTES * 60,
-        first=15
-    )
-
-    log.info("Bot starting; scan interval=%s minutes", SCAN_MINUTES)
-    app.run_polling(drop_pending_updates=True)
-
-
-if name == "main":
-    main()
+                results.append(signal)
