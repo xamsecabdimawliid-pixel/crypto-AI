@@ -1,7 +1,4 @@
-import os
 import pandas as pd
-
-RISK_PERCENT = float(os.getenv("RISK_PERCENT", "5"))
 
 
 def ema(series, period):
@@ -16,7 +13,6 @@ def rsi(series, period=14):
     loss = (-delta.clip(upper=0)).ewm(
         alpha=1 / period, adjust=False
     ).mean()
-
     rs = gain / loss.replace(0, 1e-12)
     return 100 - (100 / (1 + rs))
 
@@ -68,7 +64,6 @@ def analyze_market(frames):
         if len(df) < 60:
             return None
 
-        # Ka tag candle-ka aan weli dhammaan
         data[key] = df.iloc[:-1].copy()
 
         if len(data[key]) < 55:
@@ -80,6 +75,14 @@ def analyze_market(frames):
     h5 = data["5h"]
     d1 = data["1d"]
 
+    daily_atr = float(
+        atr(d1).iloc[-1] / d1["close"].iloc[-1] * 100
+    )
+
+    # Ka reeb coins aad u deggan
+    if daily_atr < 3.5:
+        return None
+
     daily = trend_up(d1)
     four_hour = trend_up(h4)
     five_hour = trend_up(h5)
@@ -88,7 +91,6 @@ def analyze_market(frames):
 
     close = m15["close"]
     rsi_value = rsi(close)
-    atr_value = atr(m15)
 
     macd = ema(close, 12) - ema(close, 26)
     macd_signal = ema(macd, 9)
@@ -97,10 +99,6 @@ def analyze_market(frames):
 
     entry = float(close.iloc[-1])
     current_rsi = float(rsi_value.iloc[-1])
-    current_atr = float(atr_value.iloc[-1])
-
-    if current_atr <= 0 or entry <= 0:
-        return None
 
     volume_confirm = (
         float(m15["volume"].iloc[-1])
@@ -111,7 +109,7 @@ def analyze_market(frames):
         entry > float(m15["high"].iloc[-21:-1].max())
     )
 
-    rsi_confirm = 50 <= current_rsi <= 70
+    rsi_confirm = 50 <= current_rsi <= 75
 
     macd_confirm = (
         macd.iloc[-1] > macd_signal.iloc[-1]
@@ -133,7 +131,6 @@ def analyze_market(frames):
         sum(checks.values()) / len(checks) * 100
     )
 
-    # Daily iyo 4H waa shuruudo khasab ah
     if not daily or not four_hour:
         return None
 
@@ -148,20 +145,20 @@ def analyze_market(frames):
     else:
         return None
 
-    stop = entry - (1.5 * current_atr)
-    risk_distance = entry - stop
+    # Stop Loss 5% iyo bartilmaameed TP 20%
+    stop = entry * 0.95
+    target = entry * 1.20
 
     return {
         "grade": grade,
         "score": score,
         "entry": entry,
         "stop_loss": stop,
-        "take_profit_1": entry + risk_distance * 1.5,
-        "take_profit_2": entry + risk_distance * 2.5,
-        "take_profit_3": entry + risk_distance * 3.5,
+        "take_profit_1": entry * 1.05,
+        "take_profit_2": entry * 1.10,
+        "take_profit_3": target,
         "rsi": current_rsi,
-        "atr_pct": current_atr / entry * 100,
+        "daily_atr_pct": daily_atr,
         "checks": checks,
-        "risk_percent": RISK_PERCENT,
-        "holding_estimate": "La soco 15M ilaa 5H"
+        "holding_estimate": "15M ilaa 1D"
     }
