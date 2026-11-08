@@ -3,9 +3,6 @@ import pandas as pd
 
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "5"))
 
-if RISK_PERCENT not in (1, 2, 3, 5):
-    RISK_PERCENT = 5
-
 
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
@@ -19,6 +16,7 @@ def rsi(series, period=14):
     loss = (-delta.clip(upper=0)).ewm(
         alpha=1 / period, adjust=False
     ).mean()
+
     rs = gain / loss.replace(0, 1e-12)
     return 100 - (100 / (1 + rs))
 
@@ -26,35 +24,35 @@ def rsi(series, period=14):
 def atr(df, period=14):
     previous = df["close"].shift(1)
 
-    true_range = pd.concat([
+    tr = pd.concat([
         df["high"] - df["low"],
         (df["high"] - previous).abs(),
         (df["low"] - previous).abs()
     ], axis=1).max(axis=1)
 
-    return true_range.ewm(
+    return tr.ewm(
         alpha=1 / period, adjust=False
     ).mean()
 
 
-def _valid_frame(frame, minimum=60):
-    return isinstance(frame, pd.DataFrame) and len(frame) >= minimum
+def trend_up(df):
+    if len(df) < 55:
+        return False
 
-
-def _trend(frame, fast=20, slow=50):
-    close = frame["close"]
-    fast_ema = ema(close, fast)
-    slow_ema = ema(close, slow)
+    close = df["close"]
+    e20 = ema(close, 20)
+    e50 = ema(close, 50)
 
     return bool(
-        close.iloc[-1] > fast_ema.iloc[-1] > slow_ema.iloc[-1]
-        and slow_ema.iloc[-1] > slow_ema.iloc[-6]
+        close.iloc[-1] > e20.iloc[-1]
+        and e20.iloc[-1] > e50.iloc[-1]
+        and e50.iloc[-1] > e50.iloc[-6]
     )
 
 
 def analyze_market(frames):
 
-    required = ("15m", "1h", "4h", "5h", "1d")
+    required = ["15m", "1h", "4h", "5h", "1d"]
 
     if not isinstance(frames, dict):
         return None
@@ -62,98 +60,108 @@ def analyze_market(frames):
     if any(k not in frames for k in required):
         return None
 
-    if any(not _valid_frame(frames[k]) for k in required):
-        return None
+    data = {}
 
-    m15, h1, h4, h5, d1 = (
-        frames[k].copy() for k in required
-    )
+    for key in required:
+        df = frames[key].copy()
 
-    # Ka saar candle-ka aan weli dhammaan.
-    m15, h1, h4, h5, d1 = (
-        x.iloc[:-1].copy()
-        for x in (m15, h1, h4, h5, d1)
-    )
+        if len(df) < 60:
+            return None
 
-    if any(len(x) < 55 for x in (m15, h1, h4, h5, d1)):
-        return None
+        # Ka tag candle-ka aan weli dhammaan
+        data[key] = df.iloc[:-1].copy()
 
-    daily_trend = (
-        _trend(d1, 20, 50)
-        and d1["close"].iloc[-1] > ema(d1["close"], 200).iloc[-1]
-        if len(d1) >= 205
-        else _trend(d1, 20, 50)
-    )
+        if len(data[key]) < 55:
+            return None
 
-    four_hour_trend = _trend(h4)
-    five_hour_trend = _trend(h5)
-    hourly_trend = _trend(h1)
+    m15 = data["15m"]
+    h1 = data["1h"]
+    h4 = data["4h"]
+    h5 = data["5h"]
+    d1 = data["1d"]
+
+    daily = trend_up(d1)
+    four_hour = trend_up(h4)
+    five_hour = trend_up(h5)
+    hourly = trend_up(h1)
+    fifteen_min = trend_up(m15)
 
     close = m15["close"]
-    rsi15 = rsi(close)
+    rsi_value = rsi(close)
+    atr_value = atr(m15)
 
     macd = ema(close, 12) - ema(close, 26)
     macd_signal = ema(macd, 9)
 
-    volume_avg = m15["volume"].rolling(20).mean()
-    atr15 = atr(m15)
+    volume_average = m15["volume"].rolling(20).mean()
 
     entry = float(close.iloc[-1])
+    current_rsi = float(rsi_value.iloc[-1])
+    current_atr = float(atr_value.iloc[-1])
 
-    breakout_level = m15["high"].iloc[-21:-1].max()
+    if current_atr <= 0 or entry <= 0:
+        return None
 
     volume_confirm = (
         float(m15["volume"].iloc[-1])
-        >= 1.2 * float(volume_avg.iloc[-1])
+        > float(volume_average.iloc[-1])
     )
 
-    breakout_confirm = entry > float(breakout_level)
+    breakout = (
+        entry > float(m15["high"].iloc[-21:-1].max())
+    )
 
-    rsi_confirm = 52 <= float(rsi15.iloc[-1]) <= 70
+    rsi_confirm = 50 <= current_rsi <= 70
 
-    macd_confirm = macd.iloc[-1] > macd_signal.iloc[-1]
-
-    m15_trend = _trend(m15)
+    macd_confirm = (
+        macd.iloc[-1] > macd_signal.iloc[-1]
+    )
 
     checks = {
-        "Jihada Daily bullish": daily_trend,
-        "Trend 4H bullish": four_hour_trend,
-        "Trend 5H bullish": five_hour_trend,
-        "Trend 1H bullish": hourly_trend,
-        "Trend 15M bullish": m15_trend,
-        "RSI 15M ku habboon": rsi_confirm,
-        "MACD 15M bullish": macd_confirm,
+        "Daily trend bullish": daily,
+        "4H trend bullish": four_hour,
+        "5H trend bullish": five_hour,
+        "1H trend bullish": hourly,
+        "15M trend bullish": fifteen_min,
+        "RSI wanaagsan": rsi_confirm,
+        "MACD bullish": macd_confirm,
         "Volume kordhay": volume_confirm,
-        "Breakout 20 candles": breakout_confirm
+        "Breakout xaqiijiyey": breakout
     }
 
     score = round(
-        sum(bool(v) for v in checks.values())
-        / len(checks) * 100
+        sum(checks.values()) / len(checks) * 100
     )
 
-    # A+ wuxuu u baahan yahay in dhammaan shuruudaha la buuxiyo.
-    if score < 90 or not all(checks.values()):
+    # Daily iyo 4H waa shuruudo khasab ah
+    if not daily or not four_hour:
         return None
 
-    atr_now = float(atr15.iloc[-1])
-
-    if not atr_now or atr_now <= 0:
+    if score >= 90:
+        grade = "A+"
+    elif score >= 80:
+        grade = "A"
+    elif score >= 70:
+        grade = "B+"
+    elif score >= 60:
+        grade = "B"
+    else:
         return None
 
-    stop = entry - 1.5 * atr_now
-    risk_per_unit = entry - stop
+    stop = entry - (1.5 * current_atr)
+    risk_distance = entry - stop
 
     return {
+        "grade": grade,
         "score": score,
         "entry": entry,
         "stop_loss": stop,
-        "take_profit_1": entry + 1.5 * risk_per_unit,
-        "take_profit_2": entry + 2.5 * risk_per_unit,
-        "take_profit_3": entry + 3.5 * risk_per_unit,
-        "rsi": float(rsi15.iloc[-1]),
-        "atr_pct": atr_now / entry * 100,
+        "take_profit_1": entry + risk_distance * 1.5,
+        "take_profit_2": entry + risk_distance * 2.5,
+        "take_profit_3": entry + risk_distance * 3.5,
+        "rsi": current_rsi,
+        "atr_pct": current_atr / entry * 100,
         "checks": checks,
         "risk_percent": RISK_PERCENT,
-        "holding_estimate": "Dib u eeg 15M; muddada hayntu waxay ku xiran tahay suuqa"
+        "holding_estimate": "La soco 15M ilaa 5H"
     }
