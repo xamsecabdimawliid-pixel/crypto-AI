@@ -12,6 +12,23 @@ MIN_VOLUME = 5_000_000
 MAX_SYMBOLS = 15
 
 
+def format_price(value):
+    """Convert scientific notation to normal decimal price."""
+    if value is None:
+        return "N/A"
+
+    try:
+        value = float(value)
+
+        if not pd.notna(value):
+            return "N/A"
+
+        return f"{value:.15f}".rstrip("0").rstrip(".")
+
+    except (ValueError, TypeError):
+        return str(value)
+
+
 def to_frame(candles):
     return pd.DataFrame(
         candles,
@@ -124,6 +141,14 @@ def scan_exchange(exchange_id):
                 signal["exchange"] = exchange_id.upper()
                 signal["quote_volume"] = volume
 
+                # Format signal prices without scientific notation
+                for key in (
+                    "entry", "stop_loss",
+                    "sl", "tp1", "tp2", "tp3"
+                ):
+                    if key in signal and signal[key] is not None:
+                        signal[key] = format_price(signal[key])
+
                 exchange_names = {
                     "binance": "BINANCE",
                     "bybit": "BYBIT",
@@ -155,9 +180,7 @@ def scan_top_signals():
 
     for name in EXCHANGES:
 
-        exchange_id = name.strip().lower()
-
-        try:
+        exchange_id = name.strip().lower()try:
             results.extend(scan_exchange(exchange_id))
         except Exception as error:
             print(f"{exchange_id}: {error}")
