@@ -179,8 +179,9 @@ def scan_top_signals():
     results = []
 
     for name in EXCHANGES:
+        exchange_id = name.strip().lower()
 
-        exchange_id = name.strip().lower()try:
+        try:
             results.extend(scan_exchange(exchange_id))
         except Exception as error:
             print(f"{exchange_id}: {error}")
