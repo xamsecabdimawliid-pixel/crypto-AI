@@ -1,43 +1,59 @@
+from html import escape
+
+
 def fmt(value):
     return f"{value:.8g}"
 
 
-def format_signal(signal):
+def format_signal(s):
 
-    passed = [
-        name
-        for name, ok in signal["checks"].items()
-        if ok
-    ]
+    grade_emojis = {
+        "A+": "💎",
+        "A": "🟢",
+        "B+": "🔵",
+        "B": "🟡"
+    }
 
-    passed_text = "\n".join(
-        f"✅ {name}" for name in passed
+    emoji = grade_emojis.get(s["grade"], "📊")
+
+    passed = "\n".join(
+        f"✅ {name}"
+        for name, value in s["checks"].items()
+        if value
     )
 
+    symbol = escape(s["symbol"])
+    exchange = escape(s["exchange"])
+
     return (
-        "💎 <b>A+ VIP CRYPTO SIGNAL</b> 💎\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🪙 <b>Coin:</b> {signal['symbol']}\n"
-        f"🏦 <b>Suuqa:</b> {signal['exchange']} — SPOT\n"
-        f"⭐ <b>Tayada gelitaanka:</b> A+ — {signal['score']}/100\n"
+        "💎 <b>VIP CRYPTO SIGNAL</b> 💎\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"🪙 <b>Coin:</b> {symbol}\n"
+        f"🏦 <b>Exchange:</b> {exchange} SPOT\n"
+        f"{emoji} <b>Heerka:</b> {s['grade']}\n"
+        f"⭐ <b>Score:</b> {s['score']}/100\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 <b>ENTRY:</b> <code>{fmt(signal['entry'])}</code>\n"
-        f"🛑 <b>STOP LOSS:</b> <code>{fmt(signal['stop_loss'])}</code>\n"
-        f"🎯 <b>TP1:</b> <code>{fmt(signal['take_profit_1'])}</code>\n"
-        f"🎯 <b>TP2:</b> <code>{fmt(signal['take_profit_2'])}</code>\n"
-        f"🚀 <b>TP3:</b> <code>{fmt(signal['take_profit_3'])}</code>\n"
+        "📍 <b>QIIMAHA GELITAANKA</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"💰 <b>Mugga 24-saac:</b> ${signal['quote_volume']:,.0f} USDT\n"
-        f"📊 <b>RSI 15M:</b> {signal['rsi']:.1f}\n"
-        f"📉 <b>ATR:</b> {signal['atr_pct']:.2f}%\n"
-        f"⏱ <b>Waqtiyada:</b> {signal['timeframe']}\n"
-        f"⚠️ <b>Risk setting:</b> {signal['risk_percent']}%\n"
+        f"🟢 Entry: <code>{fmt(s['entry'])}</code>\n"
+        f"🛑 Stop Loss: <code>{fmt(s['stop_loss'])}</code>\n\n"
+        f"🎯 TP1: <code>{fmt(s['take_profit_1'])}</code>\n"
+        f"🎯 TP2: <code>{fmt(s['take_profit_2'])}</code>\n"
+        f"🚀 TP3: <code>{fmt(s['take_profit_3'])}</code>\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "<b>Shuruudaha la xaqiijiyey:</b>\n"
-        f"{passed_text}\n"
+        "📊 <b>FAAHFAAHINTA SUUQA</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"📈 <a href=\"{signal['tradingview_url']}\">Ka fur TradingView</a>\n"
-        f"🕒 <b>Muddada haynta:</b> {signal['holding_estimate']}\n\n"
-        "⚠️ <b>Digniin:</b> Signal-ku ma dammaanad qaadayo faa'iido "
-        "ama win rate. Hubi qiimaha, spread-ka iyo khidmadaha."
+        f"💰 24H Volume: ${s['quote_volume']:,.0f}\n"
+        f"📈 RSI: {s['rsi']:.1f}\n"
+        f"📉 ATR: {s['atr_pct']:.2f}%\n"
+        f"⏱ Timeframes: 15M | 1H | 4H | 5H | 1D\n"
+        f"⚠️ Risk setting: {s['risk_percent']}%\n\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🔍 <b>SHURUUDAHA LA BUUXIYEY</b>\n"
+        f"{passed}\n\n"
+        f"📈 <a href=\"{s['tradingview_url']}\">FUR TRADINGVIEW</a>\n\n"
+        "⚠️ Fiiro gaar ah: Score ma aha win rate. "
+        "Hubi qiimaha iyo khatarta ka hor gelitaanka.\n"
+        "━━━━━━━━━━━━━━━━━━"
     )
