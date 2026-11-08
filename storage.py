@@ -35,10 +35,11 @@ def save_signal(s):
         cur = con.execute(
             """
             SELECT id FROM signals
-            WHERE symbol=? AND exchange=? AND status='OPEN'
+            WHERE symbol=?
+            AND created_at >= datetime('now', '-24 hours')
             ORDER BY id DESC LIMIT 1
             """,
-            (s["symbol"], s["exchange"])
+            (s["symbol"],)
         )
 
         if cur.fetchone():
