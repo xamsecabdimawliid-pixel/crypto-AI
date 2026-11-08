@@ -2,7 +2,13 @@ from html import escape
 
 
 def fmt(value):
-    return f"{value:.15f}".rstrip("0").rstrip(".")
+    if value is None:
+        return "N/A"
+
+    try:
+        return f"{float(value):.15f}".rstrip("0").rstrip(".")
+    except (ValueError, TypeError):
+        return str(value)
 
 
 def format_signal(s):
