@@ -2,7 +2,7 @@ from html import escape
 
 
 def fmt(value):
-    return f"{value:.8g}"
+    return f"{value:.15f}".rstrip("0").rstrip(".")
 
 
 def format_signal(s):
