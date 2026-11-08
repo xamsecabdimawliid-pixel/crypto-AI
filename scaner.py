@@ -1,29 +1,37 @@
-import os
 import ccxt
 import pandas as pd
+from urllib.parse import quote
 
 from strategy import analyze_market
 
-EXCHANGES = [
-    x.strip().lower()
-    for x in os.getenv(
-        "EXCHANGES", "binance,bybit,okx"
-    ).split(",")
-    if x.strip()
-]
+EXCHANGES = ["binance", "bybit", "okx"]
 
-QUOTE = os.getenv("QUOTE_CURRENCY", "USDT")
+MIN_VOLUME = 5_000_000
+MAX_SYMBOLS = 20
 
-MIN_24H_VOLUME = float(
-    os.getenv("MIN_24H_QUOTE_VOLUME", "5000000")
+# Stablecoins laga reebayo
+STABLECOINS = {
+    "USDT", "USDC", "BUSD", "DAI", "TUSD",
+    "FDUSD", "USDE", "USDS", "USDP", "PYUSD",
+    "USDD", "FRAX", "LUSD", "GUSD", "USD1",
+    "EURC", "EURS", "USTC", "UST", "USDX",
+    "USDE", "USDJ", "SUSD", "CUSD"
+}
+
+# Leveraged tokens laga reebayo
+BAD_SUFFIXES = (
+    "UP", "DOWN", "BULL", "BEAR",
+    "3L", "3S", "5L", "5S"
 )
 
-MAX_SYMBOLS = int(
-    os.getenv("MAX_SYMBOLS_PER_EXCHANGE", "10")
-)
+TV_EXCHANGES = {
+    "binance": "BINANCE",
+    "bybit": "BYBIT",
+    "okx": "OKX"
+}
 
 
-def _to_frame(candles):
+def to_frame(candles):
     return pd.DataFrame(
         candles,
         columns=[
@@ -33,22 +41,18 @@ def _to_frame(candles):
     )
 
 
-def _five_hour_from_hourly(hourly):
+def make_5h(hourly):
 
-    data = hourly.copy()
+    df = hourly.copy()
 
-    data["time"] = pd.to_datetime(
-        data["timestamp"],
-        unit="ms",
-        utc=True
+    df["time"] = pd.to_datetime(
+        df["timestamp"], unit="ms", utc=True
     )
 
-    data = data.set_index("time")
+    df = df.set_index("time")
 
-    result = data.resample(
-        "5h",
-        label="right",
-        closed="right"
+    result = df.resample(
+        "5h", label="right", closed="right"
     ).agg({
         "open": "first",
         "high": "max",
@@ -58,66 +62,68 @@ def _five_hour_from_hourly(hourly):
         "timestamp": "last"
     }).dropna()
 
-    return result.reset_index(drop=True)[
-        ["timestamp", "open", "high", "low", "close", "volume"]
-    ]
+    return result.reset_index(drop=True)
 
 
-def _fetch_frames(exchange, symbol):
+def get_frames(exchange, symbol):
 
-    hourly = _to_frame(
+    hourly = to_frame(
         exchange.fetch_ohlcv(
-            symbol,
-            timeframe="1h",
-            limit=1000
+            symbol, "1h", limit=1000
         )
     )
 
-    frames = {
-        "15m": _to_frame(
-            exchange.fetch_ohlcv(
-                symbol, timeframe="15m", limit=220
-            )
-        ),
-
+    return {
+        "15m": to_frame(exchange.fetch_ohlcv(
+            symbol, "15m", limit=220
+        )),
         "1h": hourly,
-
-        "4h": _to_frame(
-            exchange.fetch_ohlcv(
-                symbol, timeframe="4h", limit=220
-            )
-        ),
-
-        "5h": _five_hour_from_hourly(hourly),
-
-        "1d": _to_frame(
-            exchange.fetch_ohlcv(
-                symbol, timeframe="1d", limit=220
-            )
-        )
+        "4h": to_frame(exchange.fetch_ohlcv(
+            symbol, "4h", limit=220
+        )),
+        "5h": make_5h(hourly),
+        "1d": to_frame(exchange.fetch_ohlcv(
+            symbol, "1d", limit=220
+        ))
     }
 
-    return frames
+
+def is_good_coin(market):
+
+    base = market.get("base", "").upper()
+
+    if base in STABLECOINS:
+        return False
+
+    if any(base.endswith(x) for x in BAD_SUFFIXES):
+        return False
+
+    if market.get("quote") != "USDT":
+        return False
+
+    if not market.get("spot"):
+        return False
+
+    if not market.get("active", True):
+        return False
+
+    return True
 
 
-def _tradingview_url(exchange_id, market):
+def tradingview_link(exchange_id, market):
 
-    exchange_names = {
-        "binance": "BINANCE",
-        "bybit": "BYBIT",
-        "okx": "OKX"
-    }
+    exchange_name = TV_EXCHANGES.get(exchange_id)
 
-    prefix = exchange_names.get(
-        exchange_id.lower(),
-        exchange_id.upper()
-    )
+    if not exchange_name:
+        return ""
 
-    market_id = market.get("id", "").replace("/", "").replace(":", "")
+    symbol = market["id"].replace("/", "").replace(":", "")
+
+    tv_symbol = f"{exchange_name}:{symbol}"
 
     return (
         "https://www.tradingview.com/chart/?symbol="
-        f"{prefix}%3A{market_id}"
+        + quote(tv_symbol, safe="")
     )
 
 
@@ -138,57 +144,63 @@ def scan_exchange(exchange_id):
 
     for symbol, market in markets.items():
 
-        if not market.get("spot"):
-            continue
-
-        if not market.get("active", True):
-            continue
-
-        if market.get("quote") != QUOTE:
-            continue
-
-        if market.get("base") == QUOTE:
+        if not is_good_coin(market):
             continue
 
         ticker = tickers.get(symbol) or {}
 
-        quote_volume = ticker.get("quoteVolume")
+        volume = ticker.get("quoteVolume") or 0
 
-        if quote_volume is None:
-            last = ticker.get("last")
-            base_volume = ticker.get("baseVolume")
+        if volume < MIN_VOLUME:
+            continue
 
-            quote_volume = (last or 0) * (base_volume or 0)
-
-        if quote_volume and float(quote_volume) >= MIN_24H_VOLUME:
-            candidates.append(
-                (symbol, market, float(quote_volume))
-            )
+        candidates.append((symbol, market, float(volume)))
 
     candidates.sort(
-        key=lambda item: item[2],
+        key=lambda x: x[2],
         reverse=True
     )
 
     results = []
 
-    for symbol, market, quote_volume in candidates[:MAX_SYMBOLS]:
+    for symbol, market, volume in candidates[:MAX_SYMBOLS]:
 
         try:
-            frames = _fetch_frames(exchange, symbol)
+            frames = get_frames(exchange, symbol)
 
             signal = analyze_market(frames)
 
             if signal:
 
-                signal.update({
-                    "symbol": symbol,
-                    "exchange": exchange_id.upper(),
-                    "quote_volume": quote_volume,
-                    "timeframe": "15M / 1H / 4H / 5H / 1D",
-                    "tradingview_url": _tradingview_url(
-                        exchange_id, market
-                    )
-                })
+                signal["symbol"] = symbol
+                signal["exchange"] = exchange_id.upper()
+                signal["quote_volume"] = volume
+                signal["tradingview_url"] = tradingview_link(
+                    exchange_id, market
+                )
 
-                results.append(signal)
+                if signal["tradingview_url"]:
+                    results.append(signal)
+
+        except Exception as error:
+            print(f"{symbol}: {error}")
+
+    return results
+
+
+def scan_top_signals():
+
+    results = []
+
+    for exchange_id in EXCHANGES:
+
+        try:
+            results.extend(scan_exchange(exchange_id))except Exception as error:
+            print(f"{exchange_id}: {error}")
+
+    results.sort(
+        key=lambda x: (x["score"], x["quote_volume"]),
+        reverse=True
+    )
+
+    return results[:3]
