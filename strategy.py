@@ -204,8 +204,8 @@ def find_ict_setup(df):
         # Bullish displacement
         displacement = (
             body > 0
-            and body >= candle_atr * DISPLACEMENT_ATR
-        )if not displacement:
+            and body >= candle_atr * DISPLACEMENT_ATR)
+        if not displacement:
             continue
 
         # Previous liquidity sweep
