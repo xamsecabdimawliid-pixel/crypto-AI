@@ -386,9 +386,11 @@ def analyze_market(frames):
 
     # ======================================
     # 5. ADDITIONAL CONFIRMATIONS
-    # ======================================current_rsi = float(
-        rsi(m15["close"]).iloc[-1]
-    )
+    # ======================================
+current_rsi = float(
+    rsi(m15["close"]).iloc[-1]
+)
+        
 
     volume_average = (
         m15["volume"].rolling(20).mean().iloc[-1]
